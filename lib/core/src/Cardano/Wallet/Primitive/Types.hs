@@ -19,11 +19,9 @@
 -- Copyright: © 2018-2019 IOHK
 -- License: MIT
 --
--- This module contains the core primitive of a Wallet. This is roughly a
--- Haskell translation of the [Formal Specification for a Cardano Wallet](https://github.com/input-output-hk/cardano-wallet/blob/master/specifications/wallet/formal-specification-for-a-cardano-wallet.pdf)
+-- Contains primitive wallet types needed for @Cardano.Wallet.Primitive.Model@.
 --
--- It doesn't contain any particular business-logic code, but define a few
--- primitive operations on Wallet core types as well.
+-- The types were moved to a separate module to avoid import-cycles.
 
 module Cardano.Wallet.Primitive.Types
     (
@@ -146,6 +144,7 @@ import qualified Data.Text.Encoding as T
                              Wallet Metadata
 -------------------------------------------------------------------------------}
 
+--
 data WalletMetadata = WalletMetadata
     { name
         :: !WalletName
