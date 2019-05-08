@@ -144,7 +144,8 @@ import qualified Data.Text.Encoding as T
                              Wallet Metadata
 -------------------------------------------------------------------------------}
 
---
+-- | @WalletMetadata@ stores additional information that is of interest to the
+-- API.
 data WalletMetadata = WalletMetadata
     { name
         :: !WalletName
@@ -398,10 +399,10 @@ instance Buildable TxStatus where
         InLedger -> "in ledger"
         Invalidated -> "invalidated"
 
--- | The flow of funds in to or out of a wallet.
+-- | The @Direction@ of a transaction - will the wallet balance decrease or not?
 data Direction
-    = Outgoing -- ^ Funds exit the wallet.
-    | Incoming -- ^ Funds enter the wallet.
+    = Outgoing -- ^ The wallet balance decreases.
+    | Incoming -- ^ The wallet balance increases or stays the same.
     deriving (Show, Eq, Ord, Generic)
 
 instance NFData Direction
