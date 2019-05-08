@@ -2,9 +2,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeApplications #-}
 
-module Cardano.Wallet.Binary.JormungandrSpec
-    ( spec
-    ) where
+module Cardano.Wallet.Binary.JormungandrSpec where
 
 import Prelude
 

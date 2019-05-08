@@ -35,8 +35,9 @@ library
       base
     , cardano-wallet-core
     , fmt
---    , binary
---    , bytestring
+    , binary
+    , bytestring
+    , memory
 --    , cardano-crypto
 --    , cryptonite
 --    , digest
