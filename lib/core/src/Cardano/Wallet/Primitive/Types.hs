@@ -403,16 +403,17 @@ instance Buildable TxStatus where
 
 instance FromText TxStatus where
     fromText txt = case txt of
-        "Pending" -> Right Pending
-        "InLedger" -> Right InLedger
-        "Invalidated" -> Right Invalidated
+        "pending" -> Right Pending
+        "in_ledger" -> Right InLedger
+        "invalidated" -> Right Invalidated
         _ ->
-            Left . TextDecodingError $ "not a valid value: " <> show txt
+            Left . TextDecodingError $ show txt
+                   <> " is neither \"pending\", \"in_ledger\", nor \"invalidated\""
 
 instance ToText TxStatus where
-    toText Pending = "Pending"
-    toText InLedger = "InLedger"
-    toText Invalidated = "Invalidated"
+    toText Pending = "pending"
+    toText InLedger = "in_ledger"
+    toText Invalidated = "invalidated"
 
 -- | The flow of funds in to or out of a wallet.
 data Direction
@@ -429,14 +430,15 @@ instance Buildable Direction where
 
 instance FromText Direction where
     fromText txt = case txt of
-        "Outgoing" -> Right Outgoing
-        "Incoming" -> Right Incoming
+        "outgoing" -> Right Outgoing
+        "incoming" -> Right Incoming
         _ ->
-            Left . TextDecodingError $ "not a valid value: " <> show txt
+            Left . TextDecodingError $ show txt
+                   <> " is neither \"outgoing\", nor \"incoming\""
 
 instance ToText Direction where
-    toText Outgoing = "Outgoing"
-    toText Incoming = "Incoming"
+    toText Outgoing = "outgoing"
+    toText Incoming = "incoming"
 
 data TxWitness
     = PublicKeyWitness ByteString (Hash "signature")
