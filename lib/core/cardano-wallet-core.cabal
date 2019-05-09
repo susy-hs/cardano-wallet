@@ -59,6 +59,13 @@ library
     , transformers
     , vector
 
+    , persistent
+    , persistent-sqlite
+    , conduit
+    , monad-logger
+    , mtl
+    , fast-logger
+
   hs-source-dirs:
       src
   exposed-modules:

@@ -1,22 +1,44 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE EmptyDataDecls #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module Cardano.Wallet.DB.Sqlite where
+module Cardano.Wallet.DB.Sqlite
+    ( newDBLayer
+    ) where
 
 import Prelude
 
+import Cardano.Wallet.DB
+    ( DBLayer (..)
+    , ErrNoSuchWallet (..)
+    , ErrWalletAlreadyExists (..)
+    , PrimaryKey (..)
+    )
 import Cardano.Wallet.DB.SqliteTypes
-    ( AddressScheme, TxId )
+    ( AddressScheme (..), TxId )
+import Control.Exception
+    ( try )
+import Control.Monad
+    ( void )
+import qualified Data.ByteString.Char8 as B8
+import Data.Generics.Internal.VL.Lens
+    ( (^.) )
 import Data.Text
     ( Text )
+import qualified Data.Text as T
 import Data.Time.Clock
     ( UTCTime )
 import Data.Word
@@ -24,6 +46,29 @@ import Data.Word
 import Database.Persist.TH
 import GHC.Generics
     ( Generic (..) )
+import System.IO
+    ( stderr )
+import System.Log.FastLogger
+    ( fromLogStr )
+
+import Conduit
+    ( MonadUnliftIO, ResourceT, runResourceT )
+import Control.Monad.Logger
+    ( LoggingT, runNoLoggingT, runStderrLoggingT )
+import Control.Monad.Reader
+    ( ReaderT )
+import Database.Persist.Sqlite
+    -- ( SqlBackend, runMigration, runSqlConn, withSqliteConn )
+import Control.Monad.Trans.Except
+    ( ExceptT (..), runExceptT )
+import Database.Persist.Sql
+    ( LogFunc )
+import Database.Persist.Sqlite
+    ( createSqlPool, wrapConnection )
+import qualified Database.Sqlite as Sqlite
+
+import Cardano.Wallet.Primitive.Types
+    ( WalletMetadata (..) )
 
 import qualified Cardano.Wallet.Primitive.Types as W
 
@@ -144,3 +189,59 @@ UTxO                                  sql=utxo
     Foreign Checkpoint fk_checkpoint_utxo utxoTableWalletId utxoTableWalletSlot
     deriving Show Generic
 |]
+
+enableForeignKeys :: Sqlite.Connection -> IO ()
+enableForeignKeys conn = Sqlite.prepare conn "PRAGMA foreign_keys = ON;" >>= void . Sqlite.step
+
+createSqliteBackend :: Maybe FilePath -> LogFunc -> IO SqlBackend
+createSqliteBackend fp logFunc = do
+  conn <- Sqlite.open (sqliteConnStr fp)
+  enableForeignKeys conn
+  wrapConnection conn logFunc
+
+sqliteConnStr :: Maybe FilePath -> Text
+sqliteConnStr = maybe ":memory:" T.pack
+
+newDBLayer :: forall s t. Maybe FilePath -> IO (DBLayer IO s t)
+newDBLayer fp = do
+    conn <- createSqliteBackend fp logStderr
+    unsafeRunQuery conn $ runMigration migrateAll
+    return $ DBLayer
+        { createWallet = \(PrimaryKey wid) _cp meta -> ExceptT $ unsafeRunQuery conn $ do
+                insert (mkWalletEntity wid meta)
+                pure $ Right ()
+        , removeWallet = \(PrimaryKey wid) -> ExceptT $ unsafeRunQuery conn $ do
+                n <- deleteWhereCount [WalId ==. wid]
+                pure $ if n == 0
+                       then Left (ErrNoSuchWallet wid)
+                       else Right ()
+        , listWallets = unsafeRunQuery conn $
+            map (PrimaryKey . walId . entityVal) <$> selectList [] []
+            -- fixme: would like to use selectKeysList [] []
+        }
+
+logStderr :: LogFunc
+logStderr _ _ _ str = B8.hPutStrLn stderr (fromLogStr str)
+
+-- | Run a query without error handling. There will be exceptions thrown.
+unsafeRunQuery
+    :: SqlBackend
+    -> SqlPersistM a
+    -> IO a
+unsafeRunQuery conn = runResourceT . runNoLoggingT . flip runSqlConn conn
+
+runQuery
+    :: SqlBackend
+    -> SqlPersistM a
+    -> ExceptT Sqlite.SqliteException IO a
+runQuery conn = ExceptT . try . runResourceT . runNoLoggingT . flip runSqlConn conn
+
+mkWalletEntity :: W.WalletId -> W.WalletMetadata -> Wallet
+mkWalletEntity wid md = Wallet
+    { walId = wid
+    , walName = W.getWalletName (md ^. #name)
+    , walPassphraseLastUpdatedAt = W.lastUpdatedAt (md ^. #passphraseInfo)
+    , walStatus = md ^. #status
+    , walDelegation = Nothing
+    , walAddressScheme = Sequential -- fixme: depends on wallet
+    }
