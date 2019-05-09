@@ -6,6 +6,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -31,6 +32,8 @@ import Cardano.Wallet.DB.SqliteTypes
     ( AddressScheme (..), TxId )
 import Control.Exception
     ( try )
+import Control.Lens
+    ( to )
 import Control.Monad
     ( void )
 import qualified Data.ByteString.Char8 as B8
@@ -45,7 +48,7 @@ import Data.Word
     ( Word32 )
 import Database.Persist.TH
 import GHC.Generics
-    ( Generic (..) )
+    ( Generic )
 import System.IO
     ( stderr )
 import System.Log.FastLogger
@@ -84,7 +87,7 @@ share
 Wallet
     walTableId                 W.WalletId     sql=wallet_id
     walTableName               Text           sql=name
-    walTablePassLastUpdatedAt  UTCTime        sql=passphrase_last_updated_at
+    walTablePassphraseLastUpdatedAt  UTCTime  sql=passphrase_last_updated_at
     walTableStatus             W.WalletState  sql=status
     walTableDelegation         Text Maybe     sql=delegation
     walTableAddressScheme      AddressScheme  sql=address_discovery
@@ -190,6 +193,9 @@ UTxO                                  sql=utxo
     deriving Show Generic
 |]
 
+----------------------------------------------------------------------------
+-- Sqlite connection set up
+
 enableForeignKeys :: Sqlite.Connection -> IO ()
 enableForeignKeys conn = Sqlite.prepare conn "PRAGMA foreign_keys = ON;" >>= void . Sqlite.step
 
@@ -201,24 +207,6 @@ createSqliteBackend fp logFunc = do
 
 sqliteConnStr :: Maybe FilePath -> Text
 sqliteConnStr = maybe ":memory:" T.pack
-
-newDBLayer :: forall s t. Maybe FilePath -> IO (DBLayer IO s t)
-newDBLayer fp = do
-    conn <- createSqliteBackend fp logStderr
-    unsafeRunQuery conn $ runMigration migrateAll
-    return $ DBLayer
-        { createWallet = \(PrimaryKey wid) _cp meta -> ExceptT $ unsafeRunQuery conn $ do
-                insert (mkWalletEntity wid meta)
-                pure $ Right ()
-        , removeWallet = \(PrimaryKey wid) -> ExceptT $ unsafeRunQuery conn $ do
-                n <- deleteWhereCount [WalId ==. wid]
-                pure $ if n == 0
-                       then Left (ErrNoSuchWallet wid)
-                       else Right ()
-        , listWallets = unsafeRunQuery conn $
-            map (PrimaryKey . walId . entityVal) <$> selectList [] []
-            -- fixme: would like to use selectKeysList [] []
-        }
 
 logStderr :: LogFunc
 logStderr _ _ _ str = B8.hPutStrLn stderr (fromLogStr str)
@@ -236,12 +224,99 @@ runQuery
     -> ExceptT Sqlite.SqliteException IO a
 runQuery conn = ExceptT . try . runResourceT . runNoLoggingT . flip runSqlConn conn
 
+
+----------------------------------------------------------------------------
+-- Database layer methods
+
+-- | Sets up a connection to the SQLite database.
+--
+-- Database migrations are run to create tables if necessary.
+--
+-- If the given file path does not exist, it will be created by the sqlite
+-- library.
+newDBLayer
+    :: forall s t. Maybe FilePath
+       -- ^ Database file location, or Nothing for in-memory database
+    -> IO (DBLayer IO s t)
+newDBLayer fp = do
+    conn <- createSqliteBackend fp logStderr
+    unsafeRunQuery conn $ runMigration migrateAll
+    return $ DBLayer
+
+        {-----------------------------------------------------------------------
+                                      Wallets
+        -----------------------------------------------------------------------}
+
+        { createWallet = \(PrimaryKey wid) _cp meta -> ExceptT $ unsafeRunQuery conn $ do
+                insert (mkWalletEntity wid meta)
+                pure $ Right ()
+        , removeWallet = \(PrimaryKey wid) -> ExceptT $ unsafeRunQuery conn $ do
+                n <- deleteWhereCount [WalTableId ==. wid]
+                pure $ if n == 0
+                       then Left (ErrNoSuchWallet wid)
+                       else Right ()
+        , listWallets = unsafeRunQuery conn $
+            map (PrimaryKey . walTableId . entityVal) <$> selectList [] []
+            -- fixme: would like to use selectKeysList [] []
+
+        {-----------------------------------------------------------------------
+                                    Checkpoints
+        -----------------------------------------------------------------------}
+
+        , putCheckpoint = \(PrimaryKey _wid) _cp -> ExceptT $ undefined
+
+        , readCheckpoint = \_key -> undefined
+
+        {-----------------------------------------------------------------------
+                                   Wallet Metadata
+        -----------------------------------------------------------------------}
+
+        , putWalletMeta = \(PrimaryKey wid) meta -> ExceptT $ unsafeRunQuery conn $
+                selectFirst [WalTableId ==. wid] [] >>= \case
+                    Just _ -> do
+                        updateWhere [WalTableId ==. wid]
+                            (mkWalletMetadataUpdate meta)
+                        pure $ Right ()
+                    Nothing -> pure $ Left $ ErrNoSuchWallet wid
+
+        , readWalletMeta = \(PrimaryKey wid) -> unsafeRunQuery conn $
+               fmap (metadataFromEntity . entityVal) <$> selectFirst [WalTableId ==. wid] []
+
+        }
+
+----------------------------------------------------------------------------
+-- Conversion between Persistent table types and wallet types
+
+delegationToText :: W.WalletDelegation W.PoolId -> Maybe Text
+delegationToText W.NotDelegating = Nothing
+delegationToText (W.Delegating pool) = Just (W.getPoolId pool)
+
+delegationFromText :: Maybe Text -> W.WalletDelegation W.PoolId
+delegationFromText Nothing = W.NotDelegating
+delegationFromText (Just pool) = W.Delegating (W.PoolId pool)
+
 mkWalletEntity :: W.WalletId -> W.WalletMetadata -> Wallet
-mkWalletEntity wid md = Wallet
-    { walId = wid
-    , walName = W.getWalletName (md ^. #name)
-    , walPassphraseLastUpdatedAt = W.lastUpdatedAt (md ^. #passphraseInfo)
-    , walStatus = md ^. #status
-    , walDelegation = Nothing
-    , walAddressScheme = Sequential -- fixme: depends on wallet
+mkWalletEntity wid meta = Wallet
+    { walTableId = wid
+    , walTableName = meta ^. #name . to W.getWalletName
+    , walTablePassphraseLastUpdatedAt = meta ^. #passphraseInfo . to W.lastUpdatedAt
+    , walTableStatus = meta ^. #status
+    , walTableDelegation = meta ^. #delegation . to delegationToText
+    , walTableAddressScheme = Sequential -- fixme: depends on wallet
+    }
+
+mkWalletMetadataUpdate :: W.WalletMetadata -> [Update Wallet]
+mkWalletMetadataUpdate meta =
+    [ WalTableName =. meta ^. #name . to W.getWalletName
+    , WalTablePassphraseLastUpdatedAt =. meta ^. #passphraseInfo . to W.lastUpdatedAt
+    , WalTableStatus =. meta ^. #status
+    , WalTableDelegation =. meta ^. #delegation . to delegationToText
+    ]
+
+metadataFromEntity :: Wallet -> W.WalletMetadata
+metadataFromEntity wal = W.WalletMetadata
+    { name = W.WalletName (walTableName wal)
+    , passphraseInfo = W.WalletPassphraseInfo (walTablePassphraseLastUpdatedAt wal)
+    , status = walTableStatus wal
+    , delegation = delegationFromText (walTableDelegation wal)
     }

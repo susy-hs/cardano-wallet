@@ -46,6 +46,7 @@ library
     , generic-lens
     , http-api-data
     , http-media
+    , lens
     , memory
     , path-pieces
     , persistent
