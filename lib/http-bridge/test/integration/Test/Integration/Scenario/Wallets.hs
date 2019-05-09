@@ -71,7 +71,7 @@ spec = do
             , expectFieldEqual state (Restoring (Quantity minBound))
             , expectFieldEqual delegation (NotDelegating)
             , expectFieldEqual walletId "2cf060fe53e4e0593f145f22b858dfc60676d4ab"
-            , expectFieldNotEqual passphraseLastUpdate "2019-04-12 07:57:28.439742724 UTC"
+            , expectFieldNotEqual passphraseLastUpdate Nothing
             ]
 
     it "WALLETS_CREATE_01 - Created a wallet can be listed" $ \ctx -> do
