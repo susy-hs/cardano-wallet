@@ -75,6 +75,7 @@ library
       Cardano.Wallet.Primitive.Types
       Cardano.Wallet.Transaction
       Data.Quantity
+      System.Environment.Lookup
   other-modules:
       Paths_cardano_wallet_core
 
@@ -142,3 +143,4 @@ test-suite unit
       Cardano.Wallet.Primitive.TypesSpec
       Cardano.WalletSpec
       Data.QuantitySpec
+      System.Environment.LookupSpec
