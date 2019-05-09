@@ -26,7 +26,7 @@ import Prelude hiding
 
 import Cardano.CLI
     ( Port (..), getLine, getSensitiveLine, parseArgWith, putErrLn )
-import Cardano.Environment
+import Cardano.Environment.HttpBridge
     ( network )
 import Cardano.Wallet
     ( mkWalletLayer )
